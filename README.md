@@ -4,7 +4,8 @@ Ask a Claude model "Land or Water?" for one latitude/longitude at a time, typed 
 every 2° of the globe (16,200 points). Plot the answers. What comes out is the world map the
 model learned from text alone.
 
-No images, no tools, no system prompt, **no thinking**. Each question is a separate request:
+No images, no tools, no system prompt, and thinking off wherever the model allows it. Each question
+is a separate request:
 
 ```
 Is the point at latitude 41, longitude -73 on land or in water?
@@ -28,39 +29,105 @@ An `ANTHROPIC_API_KEY` environment variable also works and takes priority over `
 ## Usage
 
 ```bash
-uv run landwater models                       # list models; [default] marks the 3 test models
-uv run landwater run --step 10 --live         # quick smoke test: 648 points x 3 models, a few cents
+uv run landwater models                       # list models and presets; [default] marks the defaults
+uv run landwater run --step 10 --live         # quick smoke test: 648 points x 3 models, ~$0.40
 uv run landwater run --dry-run                # plan + cost estimate for the full 16,200-point grid
 uv run landwater run                          # full run via the Batch API (asks before spending)
 uv run landwater report                       # accuracy table + actual spend
-uv run landwater plot --truth                 # plots/earth_step2.png
+uv run landwater plot --truth                 # plots/earth_step2.png, ground truth as the last map
 uv run landwater plot --diff                  # error maps: orange = said land, blue = said water
 ```
 
-- Default models: **Haiku 4.5, Sonnet 4.6, Opus 4.8** (`DEFAULT_MODELS` in
-  [landwater/models.py](landwater/models.py)). Pick others with `-m`, e.g. `-m opus-5 sonnet-5.5`,
-  or `-m all`.
 - `--step` sets the grid spacing (must divide 180). `2` gives 16,200 points, `1` gives 64,800, `10` gives 648.
 - `run` defaults to the **Message Batches API**: half price, usually done within an hour
   (up to 24h). `--no-wait` submits and exits; run the same command again later to collect.
 - `--live` sends requests directly (full price, `--concurrency 16`). Good for small grids.
 - Everything is resumable. Answers go to `results/<model>/step<N>.jsonl` as they arrive.
   Ctrl+C, then run the same command again: only unanswered points are asked.
+- `plot` and `report` include every model that has results, unless you pass `-m`. The plot puts
+  2 maps per row up to 4 maps (2×2), else 3 per row; `--cols N` overrides.
 
-## Thinking is off
+## Choosing models
 
-| Models | How thinking is turned off |
+Default: **Haiku 4.5, Sonnet 4.6, Opus 4.8**, all with thinking off. These are the three behind the
+cost numbers below.
+
+| Model | Key | Thinking |
+|---|---|---|
+| Sonnet 4.5 (retires 2026-11-30) | `sonnet-4.5` | off by default |
+| Haiku 4.5 | `haiku-4.5` | off by default |
+| Opus 4.5, 4.6, 4.7, 4.8 | `opus-4.5` ... `opus-4.8` | off by default |
+| Sonnet 4.6 | `sonnet-4.6` | off by default |
+| Sonnet 5, Opus 5, Haiku 5.5 | `sonnet-5`, `opus-5`, `haiku-5.5` | off: `thinking: {type: "disabled"}` |
+| Sonnet 5.5 | `sonnet-5.5` | off: `thinking: {type: "between_tools"}` (no tools are sent, so it never thinks) |
+| Fable 5, Fable 5.1, Opus 5.5 | `fable-5`, `fable-5.1`, `opus-5.5` | **always on**, can't be turned off; run at `effort: "low"`, starred `*` on the plot |
+
+Presets:
+
+| Preset | Models |
 |---|---|
-| Sonnet 4.5, Haiku 4.5, Opus 4.5 to 4.8, Sonnet 4.6 | off by default when `thinking` is omitted |
-| Sonnet 5, Opus 5, Haiku 5.5 | `thinking: {type: "disabled"}` |
-| Sonnet 5.5 | `thinking: {type: "between_tools"}` (no tools are sent, so it never thinks) |
+| `default` | the three defaults above |
+| `figure` | the 12-model lineup of "How 12 blind Claudes see the Earth": Sonnet 4.5, Haiku 4.5, Opus 4.5, Opus 4.6, Sonnet 4.6, Opus 4.7, Opus 4.8, Fable 5, Sonnet 5, Opus 5, Fable 5.1, Opus 5.5 |
+| `no-thinking` | every model that can run with thinking off |
+| `thinking` | Fable 5, Fable 5.1, Opus 5.5 |
+| `all` | everything |
 
-**Not supported:** Fable 5, Fable 5.1 and Opus 5.5. Their thinking can't be turned off (the API
-rejects it), so they are left out.
+### Pick models for one run
 
-Checks: the first request for each model is a live probe; if the reply contains a thinking block,
-that model is skipped. Every saved answer records `"thought": true/false`, and `report` shows the
-count in the `thought` column (should be 0).
+Pass model keys and/or presets to `-m` (same for `report` and `plot`):
+
+```bash
+uv run landwater run -m opus-5 sonnet-5.5             # two specific models
+uv run landwater run -m default haiku-5.5             # defaults plus one more
+uv run landwater run -m figure --dry-run              # check the cost before a big run
+uv run landwater plot -m figure --truth               # plot just that lineup
+```
+
+Models that already have answers are skipped, so adding models later costs only the new ones.
+
+### Change the defaults
+
+Edit `DEFAULT_MODELS` in [landwater/models.py](landwater/models.py):
+
+```python
+DEFAULT_MODELS = ["haiku-4.5", "sonnet-4.6", "opus-4.8"]
+```
+
+Add your own preset to `PRESETS` in the same file to name a group you reuse.
+
+### Experiment with variants
+
+Each entry in `_ALL` in [landwater/models.py](landwater/models.py) is one model setup. Add a line
+with a new key to try a different setting; results are stored per key, so variants never overwrite
+each other. For example, Opus 5.5 with more thinking (there is a commented-out copy in the file):
+
+```python
+ModelSpec("opus-5.5-high", "claude-opus-5-5", "Opus 5.5 high", 4, 20,
+          {"output_config": {"effort": "high"}}, thinks=True),
+```
+
+Then run `uv run landwater run -m opus-5.5 opus-5.5-high --step 10 --live` and compare with
+`report`. The fields are: key, model ID, plot label, $ per 1M input tokens, $ per 1M output tokens,
+extra request params, and `thinks=True` if the model thinks. Other things to try: a finer grid
+(`--step 1`), or changing the prompt (`PROMPT` in [landwater/core.py](landwater/core.py)). If you change
+the prompt, use a separate `--results` folder so old and new answers don't mix.
+
+### Thinking checks
+
+The first request for each model is a live probe. If a model that should have thinking off returns
+a thinking block, that model is skipped. Every saved answer records `"thought": true/false`, and
+`report` shows the count in the `thought` column: 0 for thinking-off models, and the full count for
+Fable 5, Fable 5.1 and Opus 5.5.
+
+**Cost warning for thinking models:** they write hidden thinking tokens on every answer and cost far
+more than one-word answers. For the full grid, `run -m figure --dry-run` estimates about $270
+(roughly $107 each for Fable 5 and 5.1, $43 for Opus 5.5) at a guessed 250 thinking tokens per
+answer. Measure first with a tiny grid, then check `report` for real token counts:
+
+```bash
+uv run landwater run -m thinking --step 30 --live     # 72 points per model, about $2
+uv run landwater report --step 30
+```
 
 ## Other choices
 
@@ -105,7 +172,7 @@ before spending; `uv run landwater run --dry-run` shows the estimate only.
 
 ```
 landwater/
-  models.py   model registry, thinking-off params, default models
+  models.py   model registry, thinking settings, DEFAULT_MODELS, presets
   core.py     grid, prompt, answer parsing, ground truth, scoring (no network)
   runner.py   batch + live runners, probe, cost estimate
   store.py    JSONL results + batch bookkeeping

@@ -3,8 +3,8 @@
 Both paths are resumable: answered points live in results/<model>/stepN.jsonl and are
 never asked again. Re-run the same command to retry failures or resume after Ctrl+C.
 
-Thinking is off for every model (see models.py); each record stores "thought": true/false
-so `landwater report` can prove it.
+Thinking is off for every model except the ones marked `thinks=True` in models.py (they
+can't turn it off). Each record stores "thought": true/false so `landwater report` can prove it.
 
 No server-side refusal fallbacks are used on purpose: a fallback would answer with a
 different model and contaminate that model's map. Refusals are recorded as-is and
@@ -31,6 +31,7 @@ BATCH_CHUNK = 50_000  # API limit is 100k requests / 256 MB per batch
 # Measured on the step-10 smoke test: 36 input tokens (46 on Opus 4.7+ tokenizer), ~4-5 output.
 EST_IN_TOKENS = 46
 EST_OUT_TOKENS = 5
+EST_THINKING_TOKENS = 250  # guess for effort=low on thinking models; run a small --step first
 
 # Errors that mean "this model/request config is wrong" - retrying won't help.
 _CONFIG_ERRORS = (anthropic.BadRequestError, anthropic.PermissionDeniedError, anthropic.NotFoundError)
@@ -56,7 +57,8 @@ def make_plans(specs: list[ModelSpec], step: float) -> list[Plan]:
 
 
 def estimate_usd(spec: ModelSpec, n: int, batch: bool) -> float:
-    usd = n * (EST_IN_TOKENS * spec.price_in + EST_OUT_TOKENS * spec.price_out) / 1e6
+    out = EST_OUT_TOKENS + (EST_THINKING_TOKENS if spec.thinks else 0)
+    usd = n * (EST_IN_TOKENS * spec.price_in + out * spec.price_out) / 1e6
     return usd * (0.5 if batch else 1.0)
 
 
@@ -69,7 +71,8 @@ def print_plan(plans: list[Plan], batch: bool) -> float:
             continue
         usd = estimate_usd(p.spec, len(p.todo), batch)
         total += usd
-        print(f"{p.spec.key:<12} {len(p.todo):>8,} {usd:>9.2f}")
+        note = "always thinks: rough estimate" if p.spec.thinks else ""
+        print(f"{p.spec.key:<12} {len(p.todo):>8,} {usd:>9.2f}  {note}")
     mode = "batch, 50% off" if batch else "live"
     print(f"{'total':<12} {'':>8} {total:>9.2f}  ({mode})")
     return total
@@ -78,8 +81,8 @@ def print_plan(plans: list[Plan], batch: bool) -> float:
 def probe(client: anthropic.Anthropic, plan: Plan, step: float) -> bool:
     """Send one real request first so a bad config fails fast instead of 16k times.
 
-    Also enforces "thinking off": a model that returns a thinking block is skipped.
-    A good answer is saved, so it isn't wasted.
+    Also enforces "thinking off": a model not marked `thinks=True` that returns a thinking
+    block is skipped. A good answer is saved, so it isn't wasted.
     """
     pid, lat, lon = plan.todo[0]
     try:
@@ -87,7 +90,7 @@ def probe(client: anthropic.Anthropic, plan: Plan, step: float) -> bool:
     except _CONFIG_ERRORS as e:
         print(f"  {plan.spec.key}: skipped - {type(e).__name__}: {e.message}")
         return False
-    if used_thinking(msg):
+    if used_thinking(msg) and not plan.spec.thinks:
         print(f"  {plan.spec.key}: skipped - model returned a thinking block; thinking must be off. "
               "Fix its params in landwater/models.py.")
         return False

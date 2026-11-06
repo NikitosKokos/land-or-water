@@ -35,6 +35,7 @@ class Panel:
     label: str
     pred: np.ndarray  # cell codes
     score: Score | None
+    thinks: bool = False  # model can't turn thinking off: starred
     is_truth: bool = False
 
 
@@ -53,7 +54,7 @@ def truth_grid(step: float) -> np.ndarray:
 
 
 def _panel_title(p: Panel) -> str:
-    title = p.label
+    title = p.label + (" *" if p.thinks else "")
     if p.score is not None:
         title += f"   {p.score.accuracy:.1%}"
         if p.score.coverage < 0.999:
@@ -100,7 +101,10 @@ def render(panels: list[Panel], step: float, out: Path, diff: bool = False,
     pred_any = np.stack([p.pred for p in panels])
     n_points = panels[0].pred.size
     subtitle = (f"Asked “Land or Water?” at every {fmt_num(step)}° of the globe · "
-                f"{n_points:,} points · no images, no tools, no thinking")
+                f"{n_points:,} points · no images, no tools")
+    any_thinks = any(p.thinks for p in panels)
+    if not any_thinks:
+        subtitle += ", no thinking"
     has_missing = bool((pred_any == MISSING).any())
     if not diff:
         subtitle += " · white = “Land”"
@@ -124,7 +128,10 @@ def render(panels: list[Panel], step: float, out: Path, diff: bool = False,
         fig.legend(handles=handles, loc="upper right", bbox_to_anchor=(1 - margin / fig_w, 1 - 0.3 / fig_h),
                    ncol=1 if ncols == 1 else len(handles), frameon=False, fontsize=11, labelcolor=INK)
 
-    fig.text(1 - margin / fig_w, 0.18 / fig_h, "accuracy vs 1-km land mask, area-weighted",
+    note = "accuracy vs 1-km land mask, area-weighted"
+    if any_thinks:
+        note = "* always thinks (effort=low unless noted), others thinking off · " + note
+    fig.text(1 - margin / fig_w, 0.18 / fig_h, note,
              ha="right", va="bottom", fontsize=11, color=MUTED)
 
     out.parent.mkdir(parents=True, exist_ok=True)

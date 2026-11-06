@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 
-from .models import MAX_TOKENS, ModelSpec
+from .models import ModelSpec
 
 PROMPT = (
     "Is the point at latitude {lat}, longitude {lon} on land or in water?\n"
@@ -68,10 +68,10 @@ def prompt(lat: float, lon: float) -> str:
 
 
 def request_params(spec: ModelSpec, lat: float, lon: float) -> dict[str, Any]:
-    """Messages API params for one question. No system prompt, no tools, no images, no thinking."""
+    """Messages API params for one question. No system prompt, no tools, no images."""
     return {
         "model": spec.model_id,
-        "max_tokens": MAX_TOKENS,
+        "max_tokens": spec.max_tokens,
         "messages": [{"role": "user", "content": prompt(lat, lon)}],
         **spec.params,
     }

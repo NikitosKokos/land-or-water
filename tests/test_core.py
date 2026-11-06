@@ -112,26 +112,36 @@ def test_prediction_grid_from_records():
     assert pred[0, 0] == WATER and pred[1, 2] == LAND and pred[0, 1] == MISSING
 
 
-def test_request_params_thinking_off_for_every_model():
+def test_request_params_per_model():
     for spec in MODELS.values():
         p = request_params(spec, 1.0, 2.0)
         assert p["model"] == spec.model_id
-        assert p["max_tokens"] <= 64
         assert "temperature" not in p and "system" not in p and "tools" not in p
-        assert "output_config" not in p  # no effort setting: nothing thinks
-        assert p.get("thinking", {"type": "disabled"})["type"] in {"disabled", "between_tools"}
+        if spec.thinks:
+            # Thinking can't be disabled: lowest effort, room for thinking tokens.
+            assert p["output_config"] == {"effort": "low"} and "thinking" not in p
+            assert p["max_tokens"] >= 1024
+        else:
+            assert p["max_tokens"] <= 64 and "output_config" not in p
+            assert p.get("thinking", {"type": "disabled"})["type"] in {"disabled", "between_tools"}
     assert request_params(MODELS["sonnet-5.5"], 0, 0)["thinking"] == {"type": "between_tools"}
     assert "thinking" not in request_params(MODELS["opus-4.8"], 0, 0)  # off when omitted
 
 
-def test_models_that_cannot_disable_thinking_are_excluded():
-    ids = {m.model_id for m in MODELS.values()}
-    assert not ids & {"claude-fable-5", "claude-fable-5-1", "claude-opus-5-5"}
+def test_only_models_that_cannot_disable_thinking_think():
+    assert {m.model_id for m in MODELS.values() if m.thinks} == {
+        "claude-fable-5", "claude-fable-5-1", "claude-opus-5-5"}
 
 
 def test_presets_resolve():
-    assert [m.key for m in resolve(["default"])] == ["haiku-4.5", "sonnet-4.6", "opus-4.8"]
-    assert [m.key for m in resolve(["haiku-4.5", "default"])] == ["haiku-4.5", "sonnet-4.6", "opus-4.8"]
+    default = ["haiku-4.5", "sonnet-4.6", "opus-4.8"]
+    assert [m.key for m in resolve([])] == []
+    assert [m.key for m in resolve(["default"])] == default
+    assert [m.key for m in resolve(["haiku-4.5", "default"])] == default
+    figure = resolve(["figure"])
+    assert len(figure) == 12 and figure[0].key == "sonnet-4.5" and figure[-1].key == "opus-5.5"
+    assert not any(m.thinks for m in resolve(["no-thinking"]))
+    assert all(m.thinks for m in resolve(["thinking"]))
     assert set(PRESETS["all"]) == set(MODELS)
     with pytest.raises(SystemExit):
         resolve(["gpt-4"])

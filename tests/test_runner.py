@@ -119,6 +119,14 @@ def test_probe_skips_model_that_thinks(monkeypatch):
     assert store.load_records("sonnet-5", STEP) == {}
 
 
+def test_probe_keeps_model_that_always_thinks(monkeypatch):
+    monkeypatch.setattr(FakeClient, "_create", lambda self, **params: fake_message("Land", thinking=True))
+    runner.run_batch(runner.make_plans([MODELS["opus-5.5"]], STEP), STEP, wait=False, poll_seconds=0)
+    sent = FAKE_BATCHES.created[0]
+    assert sent[0]["params"]["output_config"] == {"effort": "low"}
+    assert store.load_records("opus-5.5", STEP)["r0c0"]["thought"] is True
+
+
 def test_live_mode(monkeypatch):
     class FakeAsync:
         def __init__(self, *a, **kw):

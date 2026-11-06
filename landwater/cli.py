@@ -50,21 +50,27 @@ def _confirm(yes: bool) -> bool:
 
 
 def cmd_models(args: argparse.Namespace) -> None:
-    print(f"{'key':<12} {'model id':<20} {'$in/$out per 1M':<16} thinking off via")
+    print(f"{'key':<12} {'model id':<18} {'$in/$out per 1M':<16} {'thinking':<28}")
     for m in MODELS.values():
-        how = f"thinking={m.params['thinking']['type']}" if "thinking" in m.params else "omitted (off by default)"
-        star = "  [default]" if m.key in DEFAULT_MODELS else ""
-        print(f"{m.key:<12} {m.model_id:<20} {f'{m.price_in:g}/{m.price_out:g}':<16} {how}{star}")
-    print("\npresets:")
+        default = "[default]" if m.key in DEFAULT_MODELS else ""
+        print(f"{m.key:<12} {m.model_id:<18} {f'{m.price_in:g}/{m.price_out:g}':<16} {m.thinking_note:<28} {default}")
+    print("\npresets (use with -m, e.g. `-m figure`):")
     for name, keys in PRESETS.items():
-        print(f"  {name:<8} {' '.join(keys)}")
+        print(f"  {name:<12} {' '.join(keys)}")
+    print("\nChange the default in landwater/models.py (DEFAULT_MODELS), or pick per run with -m.")
 
 
 def cmd_run(args: argparse.Namespace) -> None:
     from .runner import make_plans, print_plan, run_batch, run_live
 
     specs = resolve(args.models or DEFAULT_MODELS)
-    print(f"Models: {', '.join(s.key for s in specs)} (thinking off)")
+    print(f"Models: {', '.join(s.key for s in specs)}")
+    thinkers = [s.key for s in specs if s.thinks]
+    if thinkers:
+        print(f"Note: {', '.join(thinkers)} always think (thinking can't be turned off on them); "
+              "they run at effort=low and are starred on the plot. All others: thinking off.")
+    else:
+        print("Thinking: off for all models.")
     lats, lons = grid(args.step)
     print(f"Grid: every {fmt_num(args.step)} deg -> {len(lats)} x {len(lons)} = {lats.size * lons.size:,} points per model\n")
     plans = make_plans(specs, args.step)
@@ -113,7 +119,7 @@ def cmd_report(args: argparse.Namespace) -> None:
             print(f"{spec.key:<12} {0:>7}")
             continue
         refusals = sum(1 for r in recs.values() if r.get("stop") == "refusal")
-        thought = sum(1 for r in recs.values() if r.get("thought"))  # must stay 0
+        thought = sum(1 for r in recs.values() if r.get("thought"))  # stays 0 unless spec.thinks
         out_tok = sum(r.get("out", 0) for r in recs.values())
         usd = sum(
             (r.get("in", 0) * spec.price_in + r.get("out", 0) * spec.price_out) / 1e6 * (0.5 if r.get("batch") else 1)
@@ -133,13 +139,15 @@ def cmd_plot(args: argparse.Namespace) -> None:
     panels = []
     for spec in specs:
         pred = prediction_grid(store.load_records(spec.key, args.step), args.step)
-        panels.append(Panel(spec.label, pred, score(pred, args.step)))
+        panels.append(Panel(spec.label, pred, score(pred, args.step), thinks=spec.thinks))
     if args.truth:
         panels.append(Panel("Ground truth (1-km mask)", truth_grid(args.step), None, is_truth=True))
 
+    # Default layout: 2 per row up to 4 maps (2x2), else 3 per row like the reference figure.
+    ncols = args.cols or (2 if len(panels) <= 4 else 3)
     suffix = "_errors" if args.diff else ""
     out = Path(args.out) if args.out else Path("plots") / f"earth_step{fmt_num(args.step)}{suffix}.png"
-    print(f"wrote {render(panels, args.step, out, diff=args.diff, title=args.title, ncols=args.cols)}")
+    print(f"wrote {render(panels, args.step, out, diff=args.diff, title=args.title, ncols=ncols)}")
 
     if args.each:
         for spec, panel in zip(specs, panels):  # truth panel is last, so zip skips it
@@ -159,7 +167,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     def add_common(sp: argparse.ArgumentParser, models_required: bool) -> None:
         sp.add_argument("-m", "--models", nargs="+", required=models_required,
-                        help="model keys and/or presets (default, all)")
+                        help="model keys and/or presets: default, figure, no-thinking, thinking, all "
+                             "(see `landwater models`)")
         sp.add_argument("--step", type=float, default=2.0,
                         help="grid spacing in degrees; must divide 180 (default 2 -> 16,200 points)")
 
@@ -182,7 +191,7 @@ def build_parser() -> argparse.ArgumentParser:
     pl.add_argument("-o", "--out", help="output PNG (default plots/earth_step<N>.png)")
     pl.add_argument("--diff", action="store_true", help="color errors instead of land/water")
     pl.add_argument("--truth", action="store_true", help="add a ground-truth panel last")
-    pl.add_argument("--cols", type=int, default=2, help="maps per row (default 2: 3 models + truth = 2x2)")
+    pl.add_argument("--cols", type=int, help="maps per row (default: 2 for up to 4 maps, else 3)")
     pl.add_argument("--each", action="store_true", help="also save one pixel map per model")
     pl.add_argument("--title", help="override the figure title")
     pl.set_defaults(func=cmd_plot)
