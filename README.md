@@ -165,8 +165,21 @@ Per-run split, from the token usage `landwater report` logs:
 | Haiku 4.5 | $0.46 | $0.04 | $0.49 |
 | **Total** | **$4.64** | **$0.38** | **$5** |
 
-Each answer is about 36-46 input tokens and 4-5 output tokens. `run` prints an estimate and asks
-before spending; `uv run landwater run --dry-run` shows the estimate only.
+Tokens used, summed from the per-answer usage logged in `results/` (that folder is git-ignored):
+
+| Model | Run | Answers | Input tokens | Output tokens |
+|---|---|---|---|---|
+| Haiku 4.5 | full grid (2°, batch) | 16,200 | 583,200 | 66,113 |
+| Sonnet 4.6 | full grid (2°, batch) | 16,200 | 583,200 | 77,939 |
+| Opus 4.8 | full grid (2°, batch) | 16,200 | 745,200 | 68,508 |
+| Haiku 4.5 | smoke test (10°, live) | 648 | 23,328 | 2,633 |
+| Sonnet 4.6 | smoke test (10°, live) | 648 | 23,328 | 3,029 |
+| Opus 4.8 | smoke test (10°, live) | 648 | 29,808 | 2,652 |
+| **Total** | | **50,544** | **1,988,064** | **220,874** |
+
+About **2.2 million tokens** in total. Each answer is 36 input tokens (46 on Opus 4.8, whose
+tokenizer splits the same prompt into more tokens) and 4-5 output tokens. `run` prints an estimate
+and asks before spending; `uv run landwater run --dry-run` shows the estimate only.
 
 ## Layout
 
